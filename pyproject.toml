@@ -1,0 +1,15 @@
+# Tool settings only; the service is not a package.
+# Format and lint: ruff format . && ruff check .
+[tool.ruff]
+line-length = 120
+target-version = "py314"
+extend-exclude = [".local"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.File", "fastapi.Query", "fastapi.Depends"]  # FastAPI's own way of declaring inputs

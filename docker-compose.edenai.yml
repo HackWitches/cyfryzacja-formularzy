@@ -1,0 +1,14 @@
+# No GPU: the same open-weights model (Qwen3-VL-30B-A3B-Instruct) through the Eden AI API, not local Ollama.
+# Put EDENAI_API_KEY=... in .env (key from app.edenai.run) and start only the API:
+#   docker compose -f docker-compose.yml -f docker-compose.edenai.yml up --build -d api
+# Another model: set LLM_MODEL, e.g. LLM_MODEL=google/gemma-4-31b-it.
+# List the models: curl -s https://api.edenai.run/v3/models | jq -r '.data[].id'
+services:
+  api:
+    environment:
+      LLM_BASE_URL: https://api.edenai.run/v3
+      LLM_MODEL: ${LLM_MODEL:-deepinfra/Qwen/Qwen3-VL-30B-A3B-Instruct}
+      LLM_API_KEY: ${EDENAI_API_KEY:?Set EDENAI_API_KEY in .env}
+      LLM_SYSTEM_ROLE: "false"   # this model on Eden AI does not take system messages
+      LLM_TIMEOUT_S: "600"
+    depends_on: !reset {}        # no local Ollama

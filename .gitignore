@@ -1,0 +1,7 @@
+# Local working material stays out of the repo: task files, annotations, evaluations, measurements, notes.
+.local/
+.venv/
+__pycache__/
+.pytest_cache/
+.DS_Store
+.env

@@ -1,0 +1,82 @@
+{
+  "tytul": "Wniosek o ustalenie numeru porządkowego nieruchomości",
+  "adresat": {
+    "nazwa": "Wójt Gminy Elbląg",
+    "rodzaj": "organ"
+  },
+  "warianty": {
+    "podmiot": true,
+    "pelnomocnik": true
+  },
+  "strony": [
+    {
+      "tytul": "Informacje o budynku",
+      "sekcje": [
+        {
+          "tytul": "Lokalizacja budynku",
+          "techName": "lokalizacja_budynku",
+          "powtarzalna": false,
+          "warunek": null,
+          "pola": [
+            {
+              "techName": "miejscowosc",
+              "tytul": "Miejscowość",
+              "papier": "w miejscowości ……",
+              "typ": "TEXT_FIELD",
+              "wymagane": true,
+              "walidatory": [],
+              "opcje": [],
+              "slownik": null,
+              "warunek": null,
+              "linie": [
+                "L013"
+              ]
+            },
+            {
+              "techName": "ulica_budynku",
+              "tytul": "Ulica",
+              "papier": "przy ulicy 1) ……",
+              "typ": "TEXT_FIELD",
+              "wymagane": false,
+              "walidatory": [],
+              "opcje": [],
+              "slownik": null,
+              "warunek": null,
+              "linie": [
+                "L013"
+              ]
+            },
+            {
+              "techName": "numer_ewidencyjny_dzialki",
+              "tytul": "Numer ewidencyjny działki",
+              "papier": "nr ewidencyjny działki ……",
+              "typ": "TEXT_FIELD",
+              "wymagane": true,
+              "walidatory": [],
+              "opcje": [],
+              "slownik": null,
+              "warunek": null,
+              "linie": [
+                "L014"
+              ]
+            },
+            {
+              "techName": "obreb_numer",
+              "tytul": "Obręb",
+              "papier": "w obrębie ……",
+              "typ": "TEXT_FIELD",
+              "wymagane": true,
+              "walidatory": [],
+              "opcje": [],
+              "slownik": null,
+              "warunek": null,
+              "linie": [
+                "L014"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

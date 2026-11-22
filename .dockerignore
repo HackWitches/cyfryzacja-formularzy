@@ -1,0 +1,12 @@
+.env
+.venv
+__pycache__
+.pytest_cache
+tests
+*.md
+.git
+.local
+tools
+RESULTS
+docker-compose*.yml
+.DS_Store

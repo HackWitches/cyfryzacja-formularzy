@@ -1,0 +1,70 @@
+# The whole service in Docker: the API plus the open-weights model Qwen3-VL-30B-A3B in Ollama.
+# The model runs on this machine's NVIDIA GPU (tested on an RTX 4090 with 24 GB).
+# Needs Docker with GPU support: NVIDIA Container Toolkit on Linux, Docker Desktop with WSL2 on Windows.
+# The first start downloads the model (~19 GB) into the `ollama` volume; later starts reuse it.
+#   docker compose up --build -d
+# Smaller GPU: set LLM_MODEL=qwen3-vl:8b-instruct in .env (~6 GB VRAM).
+# No GPU: use docker-compose.edenai.yml.
+services:
+  api:
+    build: .
+    image: cyfryzacja-formularzy-api:1.0.0
+    env_file: .env          # secrets at runtime only
+    environment:
+      LLM_BASE_URL: http://ollama:11434/v1
+      LLM_MODEL: ${LLM_MODEL:-qwen3-vl:30b-a3b-instruct}
+      LLM_VISION: ${LLM_VISION:-auto}
+      LLM_TIMEOUT_S: ${LLM_TIMEOUT_S:-1800}   # the longest form takes minutes; a scan with page images takes longer
+    depends_on:
+      ollama-pull:
+        condition: service_completed_successfully
+    ports:
+      - "8000:8000"         # the only exposed port
+    read_only: true
+    tmpfs:
+      - /tmp:uid=10001,gid=10001,mode=1777,size=1g          # uploads live here only for the duration of a request
+      - /home/app:uid=10001,gid=10001,mode=0700,size=64m   # writable home of the non-root user
+    mem_limit: ${API_MEM_LIMIT:-4g}     # LibreOffice or OCR on a hostile file cannot take the host down
+    pids_limit: 512
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:0.40.17
+    environment:
+      OLLAMA_CONTEXT_LENGTH: "32768"   # long forms need prompt plus contract; the default 4096 cuts them off
+      OLLAMA_FLASH_ATTENTION: "1"
+      OLLAMA_KV_CACHE_TYPE: "q8_0"     # halves context memory, so 32k fits next to the 30B model in 24 GB
+      OLLAMA_NUM_PARALLEL: "${OLLAMA_NUM_PARALLEL:-2}"   # requests served at once; each holds its own context
+      OLLAMA_KEEP_ALIVE: "30m"
+    volumes:
+      - ollama:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped          # no published port: only the API reaches it, over the compose network
+
+  ollama-pull:                       # one-off: download the model if the volume does not have it yet
+    image: ollama/ollama:0.40.17
+    environment:
+      OLLAMA_HOST: ollama:11434
+    entrypoint: ["ollama", "pull", "${LLM_MODEL:-qwen3-vl:30b-a3b-instruct}"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  ollama:
