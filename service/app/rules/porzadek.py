@@ -2,10 +2,13 @@
 import re
 
 from app.domain.contract import leaves
-from app.rules.text import Context, norm, plain_fields, sections
+from app.rules.text import OPTIONAL, Context, norm, plain_fields, sections
 
-NUMBERING = re.compile(r"^\s*(\d{1,2}(\.\d{1,2})*[.)]?|[IVX]{1,4}[.)]|[A-H](\.\d{1,2})*[.)]?|[a-h]\))\s+")
-FOOTNOTE_END = re.compile(r"((?<!m)\s*[¹²³⁴⁵⁶⁷⁸⁹⁰]+|\s*\*+|(?<=[^\d\s])\d{1,2}\))+$")  # m², m³ are units
+# Paper numbering: "3.", "3)", "3.1", "IV.", "B.", "B.1.2", "a)". A bare number or letter is a word ("2 fotografie").
+NUMBERING = re.compile(r"^\s*(\d{1,2}(\.\d{1,2})+[.)]?|\d{1,2}[.)]|[IVX]{1,4}[.)]|[A-H](\.\d{1,2})+[.)]?|[A-H][.)]"
+                       r"|[a-h]\))\s+")
+FOOTNOTE_END = re.compile(r"((?<!m)\s*[¹²³⁴⁵⁶⁷⁸⁹⁰]+|\s*\*+)+$")  # m², m³ are units
+FOOTNOTE_PAREN = re.compile(r"(?<=[^\d\s])\d{1,2}\)$")  # "Nazwisko1)"; only when the bracket closes nothing: "(m2)"
 INSTRUCTION = re.compile(r"\s*\((?:postaw|zaznacz|nale[zż]y|wype[lł]ni|niepotrzebne|dot\.|opcjonaln|wpisa|podkre[sś]l"
                          r"|drukowanymi)[^)]*\)?", re.IGNORECASE)
 TRAIL = re.compile(r"[\s.…_:*]+$")
@@ -26,9 +29,24 @@ def _sentence_case(t: str) -> str:
     return out[:1].upper() + out[1:]
 
 
-def clean(title: str) -> str:
-    t = INSTRUCTION.sub("", NUMBERING.sub("", title or ""))
-    t = TRAIL.sub("", FOOTNOTE_END.sub("", t.strip()))
+def _without_footnotes(t: str) -> str:
+    while True:
+        new = FOOTNOTE_END.sub("", t)
+        if new.count(")") > new.count("("):
+            new = FOOTNOTE_PAREN.sub("", new)
+        if new == t:
+            return t
+        t = new
+
+
+def clean(title: str, keep_optional_note: bool = False) -> str:
+    """A title without paper artefacts. With `keep_optional_note`, an instruction that says the field may stay
+    empty ("(wypełnić, jeśli dotyczy)") is left for the 'wymagane' rule, which reads it and removes it."""
+    def instruction(m):
+        return m[0] if keep_optional_note and OPTIONAL.search(norm(m[0])) else ""
+
+    t = INSTRUCTION.sub(instruction, NUMBERING.sub("", title or ""))
+    t = TRAIL.sub("", _without_footnotes(t.strip()))
     t = _sentence_case(" ".join(t.split()))
     return t or title
 
@@ -39,10 +57,9 @@ def tytuly(c: dict, ctx: Context) -> list[str]:
     c["tytul"] = clean(LAW.sub("", c["tytul"])) if c["tytul"] else c["tytul"]
     if c["tytul"] != before:
         notes.append(f"tytuł formularza: '{before}' -> '{c['tytul']}'")
-    things = [p for p in c["strony"]] + list(sections(c)) + [f for _, f in plain_fields(c)
-                                                            if f["typ"] not in ("TEXT_BLOCK", "CONSENT_SECTION")]
-    for x in things:
-        new = clean(x["tytul"])
+    fields = [f for _, f in plain_fields(c) if f["typ"] not in ("TEXT_BLOCK", "CONSENT_SECTION")]
+    for x in c["strony"] + list(sections(c)) + fields:
+        new = clean(x["tytul"], keep_optional_note=x in fields)
         if new != x["tytul"]:
             notes.append(f"'{x['tytul']}' -> '{new}'")
             x["tytul"] = new

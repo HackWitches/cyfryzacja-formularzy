@@ -1,6 +1,9 @@
 """DOC/DOCX/ODS/XLSX -> PDF with LibreOffice headless (MPL-2.0, called as a separate program)."""
+import logging
 import subprocess
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 
 class ConversionError(RuntimeError):
@@ -16,7 +19,8 @@ def to_pdf(src: Path, soffice: str, timeout_s: int) -> Path:
                         "--convert-to", "pdf", "--outdir", str(out_dir), str(src)],
                        check=True, capture_output=True, timeout=timeout_s)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
-        raise ConversionError(f"Konwersja do PDF nie powiodła się: {e}") from e
+        log.warning("LibreOffice conversion failed: %r", e)  # the command line and temp paths stay in the log
+        raise ConversionError("Konwersja dokumentu do PDF nie powiodła się.") from e
     pdf = out_dir / (src.stem + ".pdf")
     if not pdf.exists():
         raise ConversionError("LibreOffice nie utworzył pliku PDF.")

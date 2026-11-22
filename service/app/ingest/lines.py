@@ -1,6 +1,8 @@
-"""Numbered text lines with boxes: the cheap deterministic "regions" the LLM cites (ARCHITEKTURA_v2, section 3).
+"""Numbered text lines with boxes: the cheap deterministic "regions" the model cites by number.
 
-Usage: python -m app.ingest.lines plik.pdf   -> prints the text that goes to the LLM
+Each line carries the paper's fill-in places as tokens: "……" a dotted line, "[___]" a box, "[#N]" a row of N
+character cells, "☐" a checkbox, " | " between the cells of a table row.
+Usage: python -m app.ingest.lines plik.pdf   -> prints the text that goes to the model
 """
 import re
 import sys
@@ -13,7 +15,17 @@ EMPTY_BOX = re.compile("[\u2751\u25a1\u25a2\u25fb\u2610\u274f\u2750\ue000-\uf8ff
 TICKED_BOX = re.compile("[\u2612\u2611\u25a0\u2713\u2714\u2716]")
 
 
-def clean(text):
+def line_id(n: int) -> str:
+    """L001, L002, ... L999, L1000: the ids the model cites in `linie`."""
+    return f"L{n:03d}"
+
+
+def numbered(n: int, page_no: int, text: str, bbox: list) -> dict:
+    return {"id": line_id(n), "page": page_no, "text": text, "bbox": bbox}
+
+
+def clean(text: str) -> str:
+    """Fill-in marks of a line in one spelling: dots -> "……", any box glyph -> ☐ / ☒."""
     text = DOTS.sub("……", text)
     text = TICKED_BOX.sub("☒", EMPTY_BOX.sub("☐", text))
     return re.sub(r"☐(?=\S)", "☐ ", text).strip()
@@ -77,11 +89,13 @@ def marks(page, cells):
                     out.append((r0[0], min(x[1] for x in run), r1[2], max(x[3] for x in run), f"[#{len(run)}]"))
                 elif 0.6 <= w / h <= 1.6:  # a lone square-ish box is a checkbox (or a one-word box if wide)
                     out.append((*r0, "☐" if w <= 18 else "[___]"))
-                run = []  # ponytail: lone thin cells are table spacers, dropped
+                run = []  # ponytail: a lone thin cell is taken for a table spacer and dropped, so a lone narrow
+                # write-in cell is lost too; tell them apart by the label next to the cell if a form needs it
             if b is not None:
                 run.append(b)
     out += [(*b, "[___]" if b[3] - b[1] <= 30 else "[___↵]") for b in boxes
-            if b not in small and b[2] - b[0] >= 30]  # ponytail: narrow tall cells are layout stripes
+            if b not in small and b[2] - b[0] >= 30]  # ponytail: boxes under 30 pt wide and over 30 pt tall count
+    # as layout stripes, so a narrow vertical write-in box is not marked; lower the width limit if forms use them
     return out
 
 
@@ -180,7 +194,8 @@ def page_lines(page):
     return sorted(free + tables, key=lambda ln: ln[1][1])  # stable: reflowed order kept within equal tops
 
 
-def lines(pdf_path):
+def lines(pdf_path) -> list[dict]:
+    """Every text line of the PDF as {id, page, text, bbox}, numbered through the whole document."""
     import pdfplumber
 
     out = []
@@ -188,12 +203,12 @@ def lines(pdf_path):
         for page_no, page in enumerate(pdf.pages, 1):
             for text, box in page_lines(page):
                 if text:
-                    out.append({"id": f"L{len(out) + 1:03d}", "page": page_no, "text": text,
-                                "bbox": [round(v, 1) for v in box]})
+                    out.append(numbered(len(out) + 1, page_no, text, [round(v, 1) for v in box]))
     return out
 
 
-def as_prompt(items):
+def as_prompt(items: list[dict]) -> str:
+    """The numbered lines as the text the model reads, with a separator before each page."""
     text, page = [], 0
     for ln in items:
         if ln["page"] != page:

@@ -1,7 +1,8 @@
-"""Kontrakt v2: what the LLM returns (docs/ARCHITEKTURA_v2.md, section 5).
+"""Kontrakt v2: the small JSON the language model returns (pages -> sections -> fields, conditions, variants).
 
 Standard library only.
-normalize() makes any LLM output safe to walk; expand() turns the ADRES and OSOBA macros into plain fields.
+normalize() makes any model output safe to walk (every key present, every value of the expected type);
+expand() turns the ADRES and OSOBA macros into plain fields.
 """
 import re
 import unicodedata
@@ -10,8 +11,13 @@ TYPES = {"TEXT_FIELD", "TEXTAREA", "NUMBER", "DATEPICKER", "RADIO", "CHECKBOX", 
          "FILE_UPLOADER", "CONSENT_SECTION", "TEXT_BLOCK"}
 VALIDATORS = {"EMAIL", "PESEL", "NIP", "REGON", "ZIP_CODE", "EPUAP", "ADE", "SERIAL_NUMBER_ID_CARD"}
 APPLICANT_DATA = {"PESEL", "NIP", "REGON", "KRS", "EPUAP", "ADE", "DOWOD", "DATA_URODZENIA"}
+CHOICE_TYPES = {"SELECT", "RADIO", "CHECKBOX"}  # the only types with options or a dictionary, and the only
+# ones a visibility condition may point at (COI technical rules)
 BASE_PAGES = ("Dane", "Kontakt i zgody")
-LEGACY_TYPES = {"TEXT": "TEXT_FIELD", "DATE": "DATEPICKER", "FILE": "FILE_UPLOADER"}  # old colleague prompt
+DEFAULT_PAGE_TITLE = "Szczegóły wniosku"
+LINE_ID = re.compile(r"L\d+")  # line ids as app/ingest/lines.py numbers them
+# Type names smaller models write instead of the COI ones; accepted so a near-miss does not become TEXT_FIELD.
+TYPE_ALIASES = {"TEXT": "TEXT_FIELD", "DATE": "DATEPICKER", "FILE": "FILE_UPLOADER"}
 
 
 def json_schema() -> dict:
@@ -56,13 +62,17 @@ def json_schema() -> dict:
     }
 
 
-def snake(text, limit=60):
+def ascii_fold(text) -> str:
+    """Lower case without Polish diacritics: the one place that knows 'ł' has no Unicode decomposition."""
     text = unicodedata.normalize("NFKD", str(text or "").replace("ł", "l").replace("Ł", "L"))
-    text = text.encode("ascii", "ignore").decode().lower()
-    return re.sub(r"[^a-z0-9]+", "_", text).strip("_")[:limit].rstrip("_") or "pole"
+    return text.encode("ascii", "ignore").decode().lower()
 
 
-def leaves(cond):
+def snake(text, limit: int = 60) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", ascii_fold(text)).strip("_")[:limit].rstrip("_") or "pole"
+
+
+def leaves(cond: dict | None) -> list[dict]:
     """All {pole, wartosc} leaves of a condition tree."""
     if not cond:
         return []
@@ -92,11 +102,20 @@ def _cond(c):
     return None
 
 
+def _list(value) -> list:
+    return value if isinstance(value, list) else []
+
+
+def _text(value) -> str | None:
+    """A non-empty string or None (a model without schema enforcement may put a list or a number here)."""
+    return value.strip() or None if isinstance(value, str) else None
+
+
 def _field(f):
     typ = str(f.get("typ") or "TEXT_FIELD").upper()
-    typ = LEGACY_TYPES.get(typ, typ)
+    typ = TYPE_ALIASES.get(typ, typ)
     typ = typ if typ in TYPES else "TEXT_FIELD"
-    val = [v for v in (str(v).upper() for v in f.get("walidatory") or []) if v in VALIDATORS]
+    val = [v for v in (str(v).upper() for v in _list(f.get("walidatory"))) if v in VALIDATORS]
     if val and typ in ("NUMBER", "TEXTAREA"):
         typ = "TEXT_FIELD"  # format validators exist only in TEXT_FIELD; a PESEL as NUMBER would lose leading zeros
     elif typ != "TEXT_FIELD":
@@ -108,12 +127,12 @@ def _field(f):
         "typ": typ,
         "wymagane": f.get("wymagane") is not False,  # spec 8.4.6: every field states it; unknown = required
         "walidatory": val,
-        "opcje": [str(o).strip() for o in f.get("opcje") or [] if str(o).strip()],
-        "slownik": f.get("slownik") or None,
-        "opis": f.get("opis") or f.get("podpowiedz") or None,
+        "opcje": [str(o).strip() for o in _list(f.get("opcje")) if str(o).strip()],
+        "slownik": _text(f.get("slownik")),
+        "opis": _text(f.get("opis")) or _text(f.get("podpowiedz")),
         "warunek": _cond(f.get("warunek") or f.get("pokaz_gdy")),
-        "linie": list(f.get("linie") or []),
-        "tooltip": f.get("tooltip") or None,
+        "linie": [i for i in _list(f.get("linie")) if isinstance(i, str) and LINE_ID.fullmatch(i)],
+        "tooltip": _text(f.get("tooltip")),
     }
 
 
@@ -129,8 +148,11 @@ OTHER_PERSON = re.compile(r"innej|wspolmalzon|kandydat|dziec|pelnomocnik|wlascic
                           r"|nieruchomosc|korespondenc|budynk|dzialk|klubu")
 
 
+PAPER_NUMBERING = re.compile(r"^(\d{1,2} )+")  # "3. Data" -> "3 data" after snake(): the paper's item number
+
+
 def is_base_field(f: dict) -> bool:
-    title = " ".join(snake(f.get("tytul") or f.get("etykieta") or "", 200).split("_"))
+    title = PAPER_NUMBERING.sub("", " ".join(snake(f.get("tytul") or f.get("etykieta") or "", 200).split("_")))
     name = f.get("techName") or ""
     if OTHER_PERSON.search(title) or OTHER_PERSON.search(name):
         return False
@@ -138,10 +160,13 @@ def is_base_field(f: dict) -> bool:
                                                              "adres_wnioskodawcy", "telefon_wnioskodawcy"))
 
 
-def normalize(raw):
-    """Any LLM output (also the old 'sekcje' format) -> a contract with every key present, without fields that
-    duplicate the base (listed in `_pola_bazy`)."""
-    c = _normalize(raw)
+def normalize(raw: dict) -> dict:
+    """Any model output -> a contract with every key present, without fields that duplicate the base (their titles
+    are listed in `_pola_bazy`). Idempotent: on an already normalized contract only the shape is checked again, so
+    the base-field guard runs once, on the model's own titles, before the Polish rules rewrite them."""
+    c = _shape(raw)
+    if "_pola_bazy" in raw:
+        return c
     for page in c["strony"]:
         for sec in page["sekcje"]:
             where = " ".join(snake(sec["tytul"] + " " + sec["techName"], 300).split("_"))
@@ -152,8 +177,10 @@ def normalize(raw):
     return c
 
 
-def _normalize(raw):
-    pages = raw.get("strony") or [{"tytul": raw.get("tytul") or "Szczegóły wniosku", "sekcje": raw.get("sekcje", [])}]
+def _shape(raw: dict) -> dict:
+    """Every key present and of the expected type; a flat answer (sections without pages) becomes one page."""
+    pages = _list(raw.get("strony")) or [{"tytul": raw.get("tytul") or DEFAULT_PAGE_TITLE,
+                                           "sekcje": raw.get("sekcje")}]
     adresat = raw.get("adresat") if isinstance(raw.get("adresat"), dict) else {}
     warianty = raw.get("warianty") if isinstance(raw.get("warianty"), dict) else {}
     return {
@@ -162,22 +189,24 @@ def _normalize(raw):
                     "rodzaj": "organ" if adresat.get("rodzaj") == "organ" else "urzad"},
         "warianty": {"podmiot": bool(warianty.get("podmiot", False)),
                      "pelnomocnik": warianty.get("pelnomocnik") is not False},
-        "dane_wnioskodawcy": [d for d in (str(x).upper() for x in raw.get("dane_wnioskodawcy") or [])
+        "dane_wnioskodawcy": [d for d in (str(x).upper() for x in _list(raw.get("dane_wnioskodawcy")))
                               if d in APPLICANT_DATA],
         "strony": [{
-            "tytul": str(p.get("tytul") or "Szczegóły wniosku").strip(),
+            "tytul": str(p.get("tytul") or DEFAULT_PAGE_TITLE).strip(),
             "warunek": _cond(p.get("warunek")),
             "sekcje": [{
                 "tytul": str(s.get("tytul") or s.get("nazwa") or "").strip(),
                 "techName": snake(s.get("techName") or s.get("tytul") or s.get("nazwa")),
                 "powtarzalna": bool(s.get("powtarzalna")),
                 "warunek": _cond(s.get("warunek")),
-                "pola": [_field(f) for f in s.get("pola") or [] if isinstance(f, dict)],
-            } for s in p.get("sekcje") or [] if isinstance(s, dict)],
+                "pola": [_field(f) for f in _list(s.get("pola")) if isinstance(f, dict)],
+            } for s in _list(p.get("sekcje")) if isinstance(s, dict)],
         } for p in pages if isinstance(p, dict)],
-        "nowe_slowniki": [d for d in raw.get("nowe_slowniki") or [] if isinstance(d, dict) and d.get("nazwa")],
-        "_pola_bazy": list(raw.get("_pola_bazy") or []),  # keeps normalize() idempotent
-        "pominiete": raw.get("pominiete") or [],
+        "nowe_slowniki": [{"nazwa": str(d["nazwa"]), "zastosowanie": str(d.get("zastosowanie") or ""),
+                           "wartosci": [str(v).strip() for v in _list(d.get("wartosci")) if str(v).strip()]}
+                          for d in _list(raw.get("nowe_slowniki")) if isinstance(d, dict) and d.get("nazwa")],
+        "_pola_bazy": [str(t) for t in _list(raw.get("_pola_bazy"))],  # its presence marks a normalized contract
+        "pominiete": _list(raw.get("pominiete")),
     }
 
 
@@ -214,7 +243,7 @@ def _person(f):
 MACROS = {"ADRES": _address, "OSOBA": _person}
 
 
-def expand(contract):
+def expand(contract: dict) -> dict:
     """Replace macro fields by their plain fields (in place) and return the contract."""
     for page in contract["strony"]:
         for sec in page["sekcje"]:
@@ -222,7 +251,8 @@ def expand(contract):
     return contract
 
 
-def fields(contract):
+def fields(contract: dict):
+    """Every field with its page and section (used by the evaluation tools that compare contracts)."""
     for page in contract["strony"]:
         for sec in page["sekcje"]:
             for f in sec["pola"]:

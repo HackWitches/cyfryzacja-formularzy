@@ -4,7 +4,7 @@ The model guesses; these rules fix what the paper states plainly (field type fro
 optional fields, "inne / jeżeli tak" conditions, the addressee). Ideas come from the form2json project; the code and
 expressions are our own. Each rule is a plain function `rule(contract, ctx) -> notes`: it changes the normalized
 contract in place and returns short notes for the debug output. A rule stays on RULES only if it improves the
-comparison on our saved results (dev/rules_ablation.py).
+comparison of saved model answers with the expected contracts of our nine forms (README, "Reguły PL").
 """
 from app.rules import naglowek, porzadek, typy, widocznosc
 from app.rules.text import Context

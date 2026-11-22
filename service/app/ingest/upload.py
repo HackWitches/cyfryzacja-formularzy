@@ -38,9 +38,10 @@ def _zip_parts(data: bytes) -> set[str]:
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             names = set(z.namelist())
             if "mimetype" in names:
-                names.add("mimetype:" + z.read("mimetype").decode("ascii", "ignore").strip())
+                with z.open("mimetype") as part:  # a few bytes are enough; never inflate the whole entry
+                    names.add("mimetype:" + part.read(128).decode("ascii", "ignore").strip())
             return names
-    except zipfile.BadZipFile:
+    except (zipfile.BadZipFile, OSError, NotImplementedError):  # broken, encrypted or exotic compression
         return set()
 
 

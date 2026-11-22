@@ -125,3 +125,51 @@ def test_truncated_answer_keeps_complete_fields():
     cut = full[:full.index("Drugie") + 3]
     data = parse_json(cut, repair=True)
     assert [f["techName"] for f in data["strony"][0]["sekcje"][0]["pola"]] == ["a"] and data["_ucieta_odpowiedz"]
+
+
+def test_label_with_two_meanings_or_a_place_keeps_the_models_type():
+    _, pola = run("typ_z_etykiety", {"tytul": "Kraj urodzenia"}, {"tytul": "Województwo urodzenia"},
+                  {"tytul": "Data i kwota wpłaty"}, {"tytul": "Rodzaj sztuki walki"}, {"tytul": "Liczba sztuk"})
+    assert [f["typ"] for f in pola] == ["TEXT_FIELD"] * 4 + ["NUMBER"]
+    c, (kraj,) = run("slownik_kraje", {"tytul": "Kraj urodzenia"})
+    assert apply(c, Context.of("")) is not None and (kraj["typ"], kraj["slownik"]) == ("SELECT", "Kraje")  # all rules
+
+
+def test_title_cleaning_keeps_units_and_counts():
+    _, pola = run("tytuly", {"tytul": "Powierzchnia (m2)"}, {"tytul": "Stawka (zł/m2)"}, {"tytul": "2 fotografie"},
+                  {"tytul": "Nazwisko1)"}, {"tytul": "B.1.2 Rodzaj budynku"}, {"tytul": "4) Cel²"})
+    assert [f["tytul"] for f in pola] == ["Powierzchnia (m2)", "Stawka (zł/m2)", "2 fotografie", "Nazwisko",
+                                          "Rodzaj budynku", "Cel"]
+
+
+def test_optional_note_in_the_title_survives_title_cleaning():
+    """'tytuly' runs first and removes instructions in brackets; the note that a field is optional must reach
+    'wymagane', which then removes it from the title."""
+    c, pola = contract({"tytul": "Telefon (opcjonalnie)"}, {"tytul": "2. Numer lokalu (wypełnić, jeśli dotyczy)"},
+                       {"tytul": "Cel (zaznaczyć właściwe)"})
+    apply(c, Context.of(""))
+    pola = c["strony"][0]["sekcje"][0]["pola"]
+    assert [(f["tytul"], f["wymagane"]) for f in pola] == [("Telefon", False), ("Numer lokalu", False), ("Cel", True)]
+
+
+def test_note_above_a_list_is_found_past_line_999():
+    lines = "L999 (można zaznaczyć kilka odpowiedzi)\nL1000 ☐ A ☐ B"
+    _, (lista,) = run("wielokrotny_wybor", {"tytul": "Cel", "typ": "RADIO", "opcje": ["A", "B"], "linie": ["L1000"]},
+                      lines=lines)
+    assert lista["typ"] == "CHECKBOX"
+
+
+def test_ocr_words_of_one_text_line_stay_in_one_line(monkeypatch):
+    """Tesseract boxes hug the glyphs: 'oraz' starts lower than 'Imię'. Words take the top of their text line."""
+    import subprocess
+    from pathlib import Path
+
+    from app.ingest import ocr
+
+    head = "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext"
+    rows = ["4\t1\t1\t1\t1\t0\t100\t100\t500\t40\t-1\t", "5\t1\t1\t1\t1\t1\t100\t100\t90\t40\t96\tImię",
+            "5\t1\t1\t1\t1\t2\t200\t112\t80\t28\t96\toraz", "5\t1\t1\t1\t1\t3\t290\t100\t200\t40\t96\tnazwisko",
+            "4\t1\t1\t1\t2\t0\t100\t160\t300\t40\t-1\t", "5\t1\t1\t1\t2\t1\t100\t170\t300\t30\t96\twnioskodawcy"]
+    monkeypatch.setattr(subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 0, "\n".join([head] + rows)))
+    lines = ocr.lines_from_images([Path("skan.png")], "pol")
+    assert [(ln["id"], ln["text"]) for ln in lines] == [("L001", "Imię oraz nazwisko"), ("L002", "wnioskodawcy")]

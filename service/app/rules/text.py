@@ -1,9 +1,13 @@
 """Shared helpers: text normalization, the form lines, and walking the contract's fields."""
 import re
-import unicodedata
 from dataclasses import dataclass, field
 
+from app.domain.contract import ascii_fold
+
 LINE = re.compile(r"^(L\d+) (.*)$")
+# The paper says the field may stay empty. Shared: 'tytuly' must leave such a note for 'wymagane' to read.
+OPTIONAL = re.compile(r"opcjonaln|nieobowiazk|(jesli|jezeli) (dotyczy|posiada)|o ile (posiada|dotyczy)|fakultatywn"
+                      r"|w przypadku posiadania")
 
 
 @dataclass
@@ -18,8 +22,7 @@ class Context:
 
 def norm(s) -> str:
     """Lower case, no Polish diacritics, single spaces: what every rule expression is written against."""
-    s = unicodedata.normalize("NFKD", str(s or "").replace("ł", "l").replace("Ł", "L"))
-    return " ".join(s.encode("ascii", "ignore").decode().lower().split())
+    return " ".join(ascii_fold(s).split())
 
 
 def field_lines(f: dict, ctx: Context) -> list[str]:

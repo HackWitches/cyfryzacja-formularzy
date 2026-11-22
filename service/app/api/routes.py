@@ -10,16 +10,27 @@ from app.ingest.upload import InputError, validate
 from app.llm import LLMError
 
 router = APIRouter()
+ERRORS = {  # documented in OpenAPI; the same table is in README.md
+    400: "Pusta lub błędna nazwa pliku, pusty plik",
+    401: "Brak lub nieważny token JWT",
+    411: "Brak nagłówka Content-Length",
+    413: "Plik większy niż MAX_FILE_SIZE_MB albo dokument dłuższy niż MAX_PAGES stron",
+    415: "Nieobsługiwany format albo zawartość niezgodna z rozszerzeniem",
+    422: "Nie udało się odczytać dokumentu (konwersja, uszkodzony plik, OCR)",
+    502: "Błąd lub niedostępność modelu językowego",
+}
 
 
 @router.get("/health")
-def health() -> dict:
+async def health() -> dict:  # async: answers from the event loop even when every worker thread waits for the model
     return {"status": "ok"}
 
 
-@router.post("/api/v1/forms/convert", dependencies=[Depends(require_jwt)])
+@router.post("/api/v1/forms/convert", dependencies=[Depends(require_jwt)],
+             responses={code: {"description": text} for code, text in ERRORS.items()})
 def convert_form(request: Request, file: UploadFile = File(...),
                  debug: bool = Query(False, description="Zwróć też kontrakt, linie i flagi do weryfikacji")):
+    """Formularz papierowy (jeden plik) -> JSON FormDefinition do importu w Generatorze Formularzy COI."""
     s = request.app.state.settings
     data = file.file.read(s.max_file_size_bytes + 1)
     try:

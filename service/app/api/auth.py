@@ -4,7 +4,7 @@ import sys
 import time
 
 import jwt
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.config import Settings
@@ -12,11 +12,12 @@ from app.config import Settings
 bearer = HTTPBearer(auto_error=False)
 
 
-async def require_jwt(request: Request) -> dict | None:
+async def require_jwt(request: Request,
+                      creds: HTTPAuthorizationCredentials | None = Depends(bearer)) -> dict | None:
+    """The token's claims, or 401. `Depends(bearer)` also puts the Bearer scheme into the OpenAPI document."""
     s: Settings = request.app.state.settings
-    if not s.jwt_secret:
-        return None  # authentication off (JWT_SECRET not set)
-    creds: HTTPAuthorizationCredentials | None = await bearer(request)
+    if s.auth_disabled:
+        return None
     if creds is None:
         raise HTTPException(401, "Brak tokenu JWT (nagłówek Authorization: Bearer ...).",
                             headers={"WWW-Authenticate": "Bearer"})

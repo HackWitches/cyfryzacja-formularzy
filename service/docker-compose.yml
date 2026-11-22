@@ -18,9 +18,11 @@ services:
     ports:
       - "8000:8000"         # the only exposed port
     read_only: true
-    tmpfs:
-      - /tmp:uid=10001,gid=10001,mode=1777        # uploads live here only for the duration of a request
-      - /home/app:uid=10001,gid=10001,mode=0700   # writable home of the non-root user
+    tmpfs:   # in memory, capped: uploads and page images live here only for the duration of a request
+      - /tmp:uid=10001,gid=10001,mode=1777,size=1g
+      - /home/app:uid=10001,gid=10001,mode=0700,size=64m   # writable home of the non-root user
+    mem_limit: ${API_MEM_LIMIT:-4g}     # LibreOffice and OCR on a hostile file cannot take the host down
+    pids_limit: 512
     security_opt:
       - no-new-privileges:true
     cap_drop:

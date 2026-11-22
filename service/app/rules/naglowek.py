@@ -3,7 +3,7 @@ import re
 
 from app.rules.text import Context, norm
 
-# Paper signals that a company or organisation may apply (docs/ARCHITEKTURA.md, section 2.2). Weaker models drop
+# Paper signals that a company or organisation may apply. Weaker models drop
 # them ("imię i nazwisko/nazwa wnioskodawcy" -> "Imię i nazwisko"), which removes the entity sections from the base.
 ENTITY_SIGNAL = re.compile(r"nazwa (firmy|podmiotu|wnioskodawcy)|/ ?nazwa|\bNIP\b|\bREGON\b|\bKRS\b|siedzib"
                            r"|piecz[eę][cć](?! (urz[eę]du|organu))", re.IGNORECASE)

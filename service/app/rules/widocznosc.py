@@ -1,12 +1,10 @@
 """When a field is shown and whether it is required."""
 import re
 
-from app.domain.contract import leaves
-from app.rules.text import Context, field_lines, norm, plain_fields, sections
+from app.domain.contract import CHOICE_TYPES, leaves
+from app.rules.text import OPTIONAL, Context, field_lines, norm, plain_fields, sections
 
-CHOICE = {"RADIO", "CHECKBOX", "SELECT"}
-OPTIONAL = re.compile(r"opcjonaln|nieobowiazk|(jesli|jezeli) (dotyczy|posiada)|o ile (posiada|dotyczy)|fakultatywn"
-                      r"|w przypadku posiadania")
+PARENTHESIS = re.compile(r"\s*\([^()]*\)")
 IF_YES = re.compile(r"^\W*(jezeli|jesli|w przypadku|gdy)\b.*\btak\b|^\W*(jezeli|jesli) (tak|zaznaczono)")
 OTHER = re.compile(r"^\W*(inne|inny|inna|innego|innych)\b(?! uwag)|^\W*(jakie|jaki|jaka)\b.*\binn"
                    r"|^\W*(prosze )?(podac|wskazac|wpisac) (jak|inn)")
@@ -20,7 +18,7 @@ def warunek_inne_tak(c: dict, ctx: Context) -> list[str]:
     for sec in sections(c):
         prev = None
         for f in sec["pola"]:
-            if f["typ"] in CHOICE and f["opcje"]:
+            if f["typ"] in CHOICE_TYPES and f["opcje"]:
                 prev = f
                 continue
             if prev is None or f["wzorzec"] != "POLE":
@@ -45,12 +43,15 @@ def warunek_inne_tak(c: dict, ctx: Context) -> list[str]:
 
 
 def wymagane(c: dict, ctx: Context) -> list[str]:
-    """'Nieobowiązkowe', 'jeśli posiada' -> optional; a field shown only after a choice is required when shown."""
+    """'Nieobowiązkowe', 'jeśli posiada' -> optional; a field shown only after a choice is required when shown.
+    The note itself ("(opcjonalnie)") leaves the title: the e-form marks optional fields on its own."""
     notes = []
     for _, f in plain_fields(c):
         if f["typ"] in ("TEXT_BLOCK", "CONSENT_SECTION"):
             continue
         optional = OPTIONAL.search(norm(" ".join([f["tytul"], f["opis"] or ""] + field_lines(f, ctx))))
+        f["tytul"] = PARENTHESIS.sub(lambda m: "" if OPTIONAL.search(norm(m[0])) else m[0], f["tytul"]).strip() \
+            or f["tytul"]
         want = False if optional else True if f["warunek"] else f["wymagane"]
         if want != f["wymagane"]:
             f["wymagane"] = want

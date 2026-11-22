@@ -1,18 +1,20 @@
 """Application settings, read once from environment variables (secrets only at runtime, never in the image)."""
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 
-
-def _int(name: str, default: int) -> int:
-    return int(os.environ.get(name, default))
+VISION_MODES = ("auto", "on", "off")
+_TRUE, _FALSE = ("1", "true", "yes", "on"), ("0", "false", "no", "off")
 
 
 @dataclass(frozen=True)
 class Settings:
+    """One field per environment variable of the same name in upper case (MAX_FILE_SIZE_MB, JWT_SECRET, ...)."""
     max_file_size_mb: int = 10
-    jwt_secret: str = ""  # empty = authentication off (local development only)
+    max_pages: int = 40  # pages of one document; a scan is rendered and read by OCR page by page
+    jwt_secret: str = ""  # required unless auth_disabled
     jwt_algorithm: str = "HS256"
     jwt_audience: str = ""
+    auth_disabled: bool = False  # local development and tests only: the API then accepts requests without a token
     # Open-source model on an OpenAI-compatible server (vLLM, Ollama, llama.cpp); the task forbids API-only models.
     llm_base_url: str = ""  # e.g. http://host.docker.internal:18000/v1
     llm_model: str = "qwen3-vl"
@@ -26,7 +28,7 @@ class Settings:
     llm_vision: str = "auto"
     ocr_lang: str = "pol"
     soffice_bin: str = "soffice"
-    convert_timeout_s: int = 120
+    convert_timeout_s: int = 120  # one LibreOffice conversion, and the OCR of one page
 
     @property
     def max_file_size_bytes(self) -> int:
@@ -34,21 +36,28 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
-        e = os.environ.get
-        return cls(
-            max_file_size_mb=_int("MAX_FILE_SIZE_MB", cls.max_file_size_mb),
-            jwt_secret=e("JWT_SECRET", ""),
-            jwt_algorithm=e("JWT_ALGORITHM", cls.jwt_algorithm),
-            jwt_audience=e("JWT_AUDIENCE", ""),
-            llm_base_url=e("LLM_BASE_URL", ""),
-            llm_model=e("LLM_MODEL", cls.llm_model),
-            llm_api_key=e("LLM_API_KEY", ""),
-            llm_timeout_s=_int("LLM_TIMEOUT_S", cls.llm_timeout_s),
-            llm_max_images=_int("LLM_MAX_IMAGES", cls.llm_max_images),
-            llm_json_schema=e("LLM_JSON_SCHEMA", "true").lower() not in ("0", "false", "no"),
-            llm_vision={"true": "on", "1": "on", "false": "off", "0": "off"}.get(
-                e("LLM_VISION", "auto").lower(), e("LLM_VISION", "auto").lower()),
-            ocr_lang=e("OCR_LANG", cls.ocr_lang),
-            soffice_bin=e("SOFFICE_BIN", cls.soffice_bin),
-            convert_timeout_s=_int("CONVERT_TIMEOUT_S", cls.convert_timeout_s),
-        )
+        """Unset or empty variables keep the defaults above; a value of the wrong type stops the start."""
+        values = {}
+        for f in fields(cls):
+            raw = os.environ.get(f.name.upper(), "").strip()
+            if raw:
+                values[f.name] = _parse(f.name.upper(), raw, type(f.default))
+        return cls(**values)
+
+    def __post_init__(self):
+        if self.llm_vision not in VISION_MODES:
+            raise ValueError(f"LLM_VISION must be one of {', '.join(VISION_MODES)}, got {self.llm_vision!r}")
+
+
+def _parse(name: str, raw: str, kind: type):
+    if kind is bool:
+        if raw.lower() not in _TRUE + _FALSE:
+            raise ValueError(f"{name} must be true or false, got {raw!r}")
+        return raw.lower() in _TRUE
+    if kind is int:
+        if not raw.isdigit():
+            raise ValueError(f"{name} must be a whole number, got {raw!r}")
+        return int(raw)
+    if name == "LLM_VISION":  # true/false are accepted as on/off
+        return {"true": "on", "1": "on", "false": "off", "0": "off"}.get(raw.lower(), raw.lower())
+    return raw

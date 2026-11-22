@@ -1,7 +1,12 @@
-"""Any OpenAI-compatible chat endpoint: local Qwen/Bielik on Ollama or llama.cpp, or Eden AI. Standard library only."""
+"""Open-source model behind any self-hosted OpenAI-compatible chat endpoint (vLLM, Ollama, llama.cpp).
+
+The HTTP client is standard library only; pdfplumber renders PDF pages to images for vision-capable models.
+"""
 import base64
+import http.client
 import io
 import json
+import logging
 import urllib.error
 import urllib.request
 from typing import Sequence
@@ -9,6 +14,12 @@ from typing import Sequence
 from app.domain.contract import json_schema as json_schema_of_contract
 from app.ingest.render import page_image
 from app.llm.base import SYSTEM_PROMPT, LLMError, Page, parse_json
+
+log = logging.getLogger(__name__)
+
+
+class _BadRequest(LLMError):
+    """HTTP 400 from the model server: usually a response_format it does not support."""
 
 
 def _images(pages: Sequence[Page], limit: int) -> list[str]:
@@ -31,8 +42,6 @@ def _images(pages: Sequence[Page], limit: int) -> list[str]:
 class OpenAICompatibleReader:
     def __init__(self, base_url: str, model: str, api_key: str, timeout_s: int, json_schema: bool = True,
                  max_images: int = 4):
-        if not base_url:
-            raise ValueError("LLM_BASE_URL is required for LLM_PROVIDER=openai")
         self.url = base_url.rstrip("/") + "/chat/completions"
         self.model, self.api_key, self.timeout_s, self.max_images = model, api_key, timeout_s, max_images
         self.schema = {"type": "json_schema", "json_schema": {"name": "kontrakt", "schema": json_schema_of_contract()}} \
@@ -46,10 +55,15 @@ class OpenAICompatibleReader:
         try:
             with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:
                 return json.loads(resp.read())
-        except urllib.error.HTTPError as e:
-            raise LLMError(f"Błąd serwera modelu ({e.code}): {e.read()[:300]!r}") from e
-        except (urllib.error.URLError, TimeoutError) as e:
-            raise LLMError(f"Brak połączenia z serwerem modelu: {e}") from e
+        except urllib.error.HTTPError as e:  # details stay in the log: the answer must not leak internals
+            log.warning("model server answered %s: %r", e.code, e.read()[:300])
+            raise (_BadRequest if e.code == 400 else LLMError)(f"Serwer modelu zwrócił błąd {e.code}.") from e
+        except (OSError, http.client.HTTPException) as e:  # refused, reset, timeout, connection cut mid-answer
+            log.warning("model server unreachable: %r", e)
+            raise LLMError("Brak połączenia z serwerem modelu.") from e
+        except ValueError as e:  # a proxy error page instead of JSON
+            log.warning("model server answered with non-JSON: %r", e)
+            raise LLMError("Serwer modelu zwrócił odpowiedź, która nie jest JSON-em.") from e
 
     def understand(self, lines_text: str, pages: Sequence[Page] = ()) -> dict:
         user = [{"type": "image_url", "image_url": {"url": u}} for u in _images(pages, self.max_images)]
@@ -60,16 +74,17 @@ class OpenAICompatibleReader:
         for attempt in range(2):  # one retry: local models occasionally emit broken JSON (Ollama, form 7)
             try:
                 data = self._post(body)
-            except LLMError as e:
-                if self.schema and "(400)" in str(e) and body["response_format"] is self.schema:
-                    body["response_format"] = {"type": "json_object"}  # server without JSON Schema support
-                    continue
-                raise
+            except _BadRequest:
+                if body["response_format"] is not self.schema:
+                    raise
+                body["response_format"] = {"type": "json_object"}  # server without JSON Schema support
+                continue
             try:
-                content = data["choices"][0]["message"]["content"]
+                content = data["choices"][0]["message"]["content"] or ""
                 cut = data["choices"][0].get("finish_reason") == "length"  # token limit: a retry would cut again
-            except (KeyError, IndexError, TypeError) as e:
-                raise LLMError(f"Nieoczekiwana odpowiedź serwera modelu: {str(data)[:300]}") from e
+            except (KeyError, IndexError, TypeError, AttributeError) as e:
+                log.warning("unexpected model server answer: %.300s", data)
+                raise LLMError("Nieoczekiwana odpowiedź serwera modelu.") from e
             try:
                 return parse_json(content, repair=cut or attempt == 1)
             except LLMError as e:

@@ -1,6 +1,7 @@
 """Field type, format validator and format hint from what the paper shows: the label and the character cells."""
 import re
 
+from app.ingest.lines import line_id
 from app.rules.text import Context, field_lines, norm, plain_fields
 
 ACCOUNT = "26 cyfr numeru rachunku"
@@ -18,9 +19,11 @@ LABEL = [(re.compile(rx), typ, val, tip) for rx, typ, val, tip in [
      "TEXT_FIELD", None, ACCOUNT),
     (r"kod\w* pocztow", "TEXT_FIELD", "ZIP_CODE", "Format: 00-000"),
     (r"telefon|\btel\b|komork", "TEXT_FIELD", None, "Np. 600 700 800"),
-    (r"^(?!.*miejsc).*(\bdata\b|\bdnia\b|\bdzien\b|dd-mm|rrrr|\burodzeni)", "DATEPICKER", None, None),
-    (r"^(?!.*slownie).*(\bkwot|\bstawk|\bwysokosc\b|\bzl\b|\bliczba\b|\bilosc\b|powierzchni|\bm2\b|\bha\b|\bsztuk)",
-     "NUMBER", None, None),
+    # "miejsce / kraj / województwo urodzenia" is a place, not a date
+    (r"^(?!.*(miejsc|kraj|panstw|wojewodztw|gmin|powiat)).*(\bdata\b|\bdnia\b|\bdzien\b|dd-mm|rrrr|\burodzeni)",
+     "DATEPICKER", None, None),
+    (r"^(?!.*slownie).*(\bkwot|\bstawk|\bwysokosc\b|\bzl\b|\bliczba\b|\bilosc\b|powierzchni|\bm2\b|\bha\b"
+     r"|\bsztuk\b)", "NUMBER", None, None),
     (r"uzasadnieni|\bopis\b|\buwagi\b|wyjasnieni|informacje dodatkowe", "TEXTAREA", None, None),
 ]]
 # Rows of character cells, as lines.py writes them: "[#2] - [#2] - [#4]" is one group of three parts.
@@ -49,8 +52,10 @@ def typ_z_etykiety(c: dict, ctx: Context) -> list[str]:
             continue
         label = norm(f["tytul"])
         hits = [(typ, val, tip) for rx, typ, val, tip in LABEL if rx.search(label)]
-        if not hits or len({val or tip for _, val, tip in hits if val or tip}) > 1:
-            continue  # "NIP/REGON", "telefon/e-mail": one field, two formats; the model's choice stays
+        if len(hits) != 1:
+            continue  # "NIP/REGON", "telefon/e-mail", "data i kwota": one field, two formats; the model's choice stays
+        # ponytail: a label joining a known and an unknown thing ("numer i data decyzji") still becomes a date;
+        # skipping every " i " label cost one correct type on our saved results, so it needs a finer signal
         typ, val, tip = hits[0]
         if not (f["typ"] == "NUMBER" and typ in ("NUMBER", "TEXTAREA")):
             notes += _set(f, typ, val, tip, "etykieta")
@@ -80,8 +85,8 @@ def slownik_kraje(c: dict, ctx: Context) -> list[str]:
     return notes
 
 
-def _previous_line(line_id: str) -> str:
-    return f"L{int(line_id[1:]) - 1:0{len(line_id) - 1}d}"
+def _previous_line(line: str) -> str:
+    return line_id(int(line[1:]) - 1)
 
 
 def wielokrotny_wybor(c: dict, ctx: Context) -> list[str]:

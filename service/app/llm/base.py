@@ -25,6 +25,8 @@ class FormReader(Protocol):
 def parse_json(text: str, repair: bool = False) -> dict:
     """The model answers with one JSON object; tolerate code fences or a sentence around it.
     With `repair`, a contract cut off mid-way is closed after its last complete object."""
+    if not isinstance(text, str):
+        raise LLMError("Model nie zwrócił tekstu.")
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end <= start:
         raise LLMError("Model nie zwrócił obiektu JSON.")
@@ -33,7 +35,7 @@ def parse_json(text: str, repair: bool = False) -> dict:
     except json.JSONDecodeError as e:
         data = _close_truncated(text[start:]) if repair else None
         if data is None:
-            raise LLMError(f"Niepoprawny JSON od modelu: {e}") from e
+            raise LLMError("Model zwrócił niepoprawny JSON.") from e
     if not isinstance(data, dict):
         raise LLMError("Model zwrócił JSON, który nie jest obiektem.")
     return data
