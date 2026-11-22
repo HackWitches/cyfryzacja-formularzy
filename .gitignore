@@ -1,6 +1,7 @@
 # Repo holds only the service and the visualization tool; everything else stays local for now.
 /*
 !/.gitignore
+!/README.md
 !/service/
 !/dev/
 /dev/*
