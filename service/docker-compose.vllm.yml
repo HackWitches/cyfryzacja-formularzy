@@ -1,0 +1,9 @@
+# Alternative: Qwen3-VL-30B-A3B in FP8 served by vLLM (OpenAI-compatible API) on the DGX Spark, reached through an
+# SSH tunnel on the host:  ssh -N -L 18000:127.0.0.1:8000 <user>@<spark>
+# Same quality as the Ollama default on 8 of 9 forms, slower on our shared GPU; JSON Schema decoding is strict.
+#   docker compose -f docker-compose.yml -f docker-compose.vllm.yml up --build -d
+services:
+  api:
+    environment:
+      LLM_BASE_URL: http://host.docker.internal:18000/v1
+      LLM_MODEL: qwen3-vl

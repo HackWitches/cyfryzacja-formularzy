@@ -1,0 +1,13 @@
+# Repo holds only the service and the visualization tool; everything else stays local for now.
+/*
+!/.gitignore
+!/service/
+!/dev/
+/dev/*
+!/dev/visualize_output.py
+
+.venv/
+__pycache__/
+.pytest_cache/
+.DS_Store
+.env

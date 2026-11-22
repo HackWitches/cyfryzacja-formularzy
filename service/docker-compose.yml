@@ -1,0 +1,28 @@
+# Default: the API in a container, the open-source model (Qwen3-VL-30B-A3B, Ollama Q4) on a GPU server reached at
+# LLM_BASE_URL. Measured best on our 9 forms (setup A: Ollama Q4, page image only for scans).
+# On the DGX Spark through an SSH tunnel on the host:  ssh -N -L 18001:127.0.0.1:11434 <user>@<spark>
+#   docker compose up --build -d
+# Model on this machine's NVIDIA GPU instead: docker-compose.local.yml; vLLM instead of Ollama: docker-compose.vllm.yml.
+services:
+  api:
+    build: .
+    image: cyfryzacja-formularzy-api:1.0.0
+    env_file: .env          # secrets at runtime only
+    environment:
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://host.docker.internal:18001/v1}
+      LLM_MODEL: ${LLM_MODEL:-qwen3-vl:30b-a3b-instruct}
+      LLM_VISION: ${LLM_VISION:-auto}
+      LLM_TIMEOUT_S: ${LLM_TIMEOUT_S:-1800}   # longest form measured: ~1400 s on a shared GPU
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8000:8000"         # the only exposed port
+    read_only: true
+    tmpfs:
+      - /tmp:uid=10001,gid=10001,mode=1777        # uploads live here only for the duration of a request
+      - /home/app:uid=10001,gid=10001,mode=0700   # writable home of the non-root user
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped

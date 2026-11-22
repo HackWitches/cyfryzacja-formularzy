@@ -1,0 +1,49 @@
+# Local stack: the model runs next to the API, in Ollama on this machine's NVIDIA GPU (tested setup: RTX 4090, 24 GB).
+# Needs Docker with GPU support (Linux: NVIDIA Container Toolkit; Windows: Docker Desktop + WSL2).
+#   docker compose -f docker-compose.yml -f docker-compose.local.yml up --build -d
+# The first start downloads the model (~19 GB) into the `ollama` volume; later starts reuse it.
+# Smaller GPU: LLM_MODEL=qwen3-vl:8b-instruct (~6 GB VRAM; faster, not measured on our forms).
+services:
+  ollama:
+    image: ollama/ollama:0.40.17
+    environment:
+      OLLAMA_CONTEXT_LENGTH: "32768"   # long forms (prompt + contract); the default 4096 cuts them off
+      OLLAMA_FLASH_ATTENTION: "1"
+      OLLAMA_KV_CACHE_TYPE: "q8_0"     # half the context memory, so 32k fits next to the 30B model in 24 GB
+      OLLAMA_NUM_PARALLEL: "${OLLAMA_NUM_PARALLEL:-2}"   # requests computed at once; each one holds its own context
+      OLLAMA_KEEP_ALIVE: "30m"
+    volumes:
+      - ollama:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped          # no published port: only the API reaches it, over the compose network
+
+  ollama-pull:                       # one-off: download the model if the volume does not have it yet
+    image: ollama/ollama:0.40.17
+    environment:
+      OLLAMA_HOST: ollama:11434
+    entrypoint: ["ollama", "pull", "${LLM_MODEL:-qwen3-vl:30b-a3b-instruct}"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    environment:
+      LLM_BASE_URL: http://ollama:11434/v1
+    depends_on:
+      ollama-pull:
+        condition: service_completed_successfully
+
+volumes:
+  ollama:

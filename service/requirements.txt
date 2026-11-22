@@ -1,0 +1,6 @@
+# Runtime dependencies, pinned (all MIT / Apache-2.0 / BSD).
+fastapi==0.165.0
+uvicorn==0.54.0
+python-multipart==0.0.34
+pdfplumber==0.11.11
+PyJWT==2.15.1

@@ -1,0 +1,76 @@
+"""Input checks required by the task: allowed formats, content matching the extension (MIME), file name, size.
+
+Content is recognised by magic bytes and, for Office/OpenDocument zips, by the parts inside the archive.
+Standard library only.
+"""
+import io
+import zipfile
+
+FORBIDDEN = set(";:></\\|'*%$")
+MAX_NAME = 250
+KINDS = {  # extension -> kind
+    "pdf": "pdf", "png": "image", "jpg": "image", "jpeg": "image",
+    "doc": "office", "docx": "office", "xlsx": "office", "ods": "office",
+}
+
+
+class InputError(ValueError):
+    """Rejected upload; `status` is the HTTP code the API answers with."""
+
+    def __init__(self, status: int, message: str):
+        super().__init__(message)
+        self.status = status
+
+
+def check_name(name: str) -> str:
+    if not name or len(name) > MAX_NAME:
+        raise InputError(400, f"Nazwa pliku musi mieć od 1 do {MAX_NAME} znaków.")
+    if FORBIDDEN & set(name):
+        raise InputError(400, "Nazwa pliku zawiera niedozwolone znaki: ; : > < / \\ | ' * % $")
+    ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    if ext not in KINDS:
+        raise InputError(415, f"Nieobsługiwany format .{ext}; dozwolone: {', '.join(sorted(KINDS))}.")
+    return ext
+
+
+def _zip_parts(data: bytes) -> set[str]:
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            names = set(z.namelist())
+            if "mimetype" in names:
+                names.add("mimetype:" + z.read("mimetype").decode("ascii", "ignore").strip())
+            return names
+    except zipfile.BadZipFile:
+        return set()
+
+
+def content_matches(ext: str, data: bytes) -> bool:
+    head = data[:8]
+    if ext == "pdf":
+        return data[:1024].lstrip().startswith(b"%PDF")
+    if ext == "png":
+        return head == b"\x89PNG\r\n\x1a\n"
+    if ext in ("jpg", "jpeg"):
+        return head[:3] == b"\xff\xd8\xff"
+    if ext == "doc":
+        return head == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"  # OLE2 compound file (Word 97-2003)
+    parts = _zip_parts(data) if head[:4] == b"PK\x03\x04" else set()
+    if ext == "docx":
+        return "word/document.xml" in parts
+    if ext == "xlsx":
+        return "xl/workbook.xml" in parts
+    if ext == "ods":
+        return "mimetype:application/vnd.oasis.opendocument.spreadsheet" in parts
+    return False
+
+
+def validate(name: str, data: bytes, max_bytes: int) -> str:
+    """Returns the file kind (pdf | image | office) or raises InputError."""
+    ext = check_name(name)
+    if not data:
+        raise InputError(400, "Pusty plik.")
+    if len(data) > max_bytes:
+        raise InputError(413, f"Plik większy niż {max_bytes // (1024 * 1024)} MB.")
+    if not content_matches(ext, data):
+        raise InputError(415, f"Zawartość pliku nie odpowiada rozszerzeniu .{ext}.")
+    return KINDS[ext]
