@@ -20,10 +20,6 @@ Zwróć WYŁĄCZNIE jeden obiekt JSON (bez komentarzy, bez ```), dokładnie w ty
   "adresat": {"nazwa": "np. Wójt Gminy Elbląg albo Urząd Gminy Stawiguda", "rodzaj": "organ (Wójt, Burmistrz, Prezydent, Starosta, Marszałek) albo urzad"},
   "warianty": {"podmiot": false, "pelnomocnik": true},
   "dane_wnioskodawcy": [],
-  "decyzje": [
-    {"pole": "techname_pola_wyboru", "pytanie": "pytanie dla obywatela", "linie": ["L020"],
-     "opcje": [{"opcja": "nazwa opcji", "pokaz": ["techName sekcji lub pól widocznych tylko przy tej opcji"]}]}
-  ],
   "strony": [
     {"tytul": "tytuł strony", "warunek": null,
      "sekcje": [
@@ -64,6 +60,22 @@ WZORCE (wzorzec)
 - "OSOBA": WYŁĄCZNIE gdy papier pyta o samo imię i nazwisko innej osoby (współmałżonka, dziecka, osoby odpowiedzialnej). Rozwiniemy do pól imię i nazwisko. techName = sufiks, np. "wspolmalzonek".
 - Pole łączące kilka rzeczy ("imię, nazwisko i adres poprzedniego właściciela") to TEXTAREA, nie OSOBA ani ADRES. Dokument, numer, metryka, plik nigdy nie są OSOBA ani ADRES.
 
+WARUNKI WIDOCZNOŚCI (warunek)
+- Warunek stawiasz na polu, sekcji albo stronie, gdy papier mówi "jeśli zaznaczono X, wypełnij Y", "w przypadku ...", "dotyczy tylko ...", "inne (jakie?) ......", albo gdy pole ma sens tylko przy jednej z opcji.
+- Liść: {"pole": "techName pola wyboru", "wartosc": "dokładna nazwa jednej z jego opcji"}.
+- Łączenie: {"i": [warunek, warunek]}, {"lub": [warunek, warunek]}, zaprzeczenie: {"nie": warunek}.
+- Przykład: opcja "inne" z linią do wpisania -> pole wyboru z opcją "Inne" oraz pole TEXT_FIELD z warunkiem {"pole": "rodzaj", "wartosc": "Inne"}.
+- Formularz "kilka w jednym" (np. stypendium / nagroda / wyróżnienie): pierwsze pole wybiera rodzaj, a sekcje lub strony dla poszczególnych rodzajów mają warunek na tym polu.
+- Warunek może wskazywać tylko pole wyboru (RADIO, CHECKBOX, SELECT) z tego wyniku.
+
+WARUNKI DLA CAŁYCH CZĘŚCI (sprawdź każdą sekcję po kolei)
+- Nagłówek części z dopiskiem "(wypełnić tylko w przypadku ...)", "(dotyczy wyłącznie ...)", "W PRZYPADKU ...", "jeżeli ..." = warunek na CAŁEJ sekcji (pole "warunek" sekcji), a nie na każdym polu osobno.
+- Odwołania do numerów pozycji ("zaznaczono TAK w poz. 34", "w przypadku zaznaczenia kratki w poz. B.1.1.2", "D.3.33.1") wskazują pole wyboru z tej pozycji i jego opcję: ustal, które pole i która opcja to jest, i zapisz warunek na tym polu.
+- Objaśnienia na końcu formularza ("Objaśnienie dotyczące punktu D.2: wypełniamy wyłącznie w przypadku ...", "Wypełnić tylko w przypadku ...") też są warunkami: przenieś je na sekcję lub pole, którego dotyczą.
+- Części alternatywne (np. obliczenie opłaty bez ulgi i z ulgą, wariant dla budynku jednorodzinnego i wielolokalowego): każda dostaje warunek na polu, które o nich rozstrzyga; dla przeciwnego przypadku użyj {"nie": ...}.
+- Pojedyncza kratka oświadczenia, od której zależą inne części (np. "☐ Oświadczam, że nieruchomość wyposażona jest w kompostownik"), to pole RADIO "Czy ...?" z opcjami "Tak" i "Nie", żeby inne sekcje mogły mieć na nim warunek.
+- Załącznik zależny od dwóch odpowiedzi ("załącznik A w przypadku zaznaczenia TAK w poz. 34 i budynku jednorodzinnego") = warunek {"i": [..., ...]}.
+
 ZASADY
 1. Kolejność pól jak na papierze. Nie wymyślaj pól, których nie ma na papierze.
 2. Kratki do zaznaczenia jednej opcji, "niepotrzebne skreślić", "TAK/NIE" = RADIO. Kratki do zaznaczenia wielu = CHECKBOX.
@@ -77,32 +89,3 @@ ZASADY
 10. Każde pytanie zamknięte "Czy ...?" (także ukryte w zdaniu "jeśli tak, to ...") = RADIO z opcjami "Tak" i "Nie"; pola zależne od odpowiedzi dostają warunek.
 11. Adres lub załącznik wymagany tylko w pewnym przypadku ("adres do korespondencji, jeśli inny niż ...", "projekt organizacji ruchu, jeżeli zajęcie wpływa na ruch"): najpierw RADIO "Czy ...?" (Tak/Nie), potem ADRES albo FILE_UPLOADER z warunkiem i "wymagane": true.
 12. Wybór z listy obiektów lub kategorii (świetlica, rasa psa, rodzaj robót, dyscyplina) = SELECT; gdy papier nie wymienia wszystkich pozycji, zaproponuj słownik w "nowe_slowniki" i wpisz jego nazwę w "slownik".
-
-DECYZJE I WARUNKI WIDOCZNOŚCI (zrób to PRZED wypisaniem "strony")
-Najpierw przeczytaj cały formularz i wypisz w "decyzje" każde pytanie lub kratkę, od której zależy, czy inne sekcje albo pola trzeba wypełnić. Szukaj:
-- wyboru rodzaju wniosku w formularzu "kilka w jednym" (np. stypendium / nagroda / wyróżnienie): wtedy pierwsze pole to "Jakiego wniosku dotyczy?";
-- pytań "Czy ...?" i kratek TAK/NIE, po których jest "jeśli tak, ...", "w przypadku zaznaczenia ...", "wypełnić tylko w przypadku ...", "dotyczy wyłącznie ...", odwołanie do numeru pozycji ("TAK w poz. 34") albo objaśnienie na końcu formularza;
-- części alternatywnych (budynek jednorodzinny / wielolokalowy, ze zwolnieniem / bez zwolnienia);
-- sposobu zwrotu, odbioru lub korespondencji (przelew -> numer rachunku, ePUAP -> adres skrzynki, poczta -> adres).
-Każda decyzja:
-- "pole": techName pola wyboru (RADIO, SELECT albo CHECKBOX), które MUSI też być w "strony" z tymi samymi opcjami;
-- "opcje": KAŻDA opcja tego pola, a w "pokaz" techName sekcji (najlepiej całych sekcji) lub pól, które pokazują się TYLKO przy tej opcji; opcja, od której nic nie zależy, ma "pokaz": [];
-- sekcje i pola, które obowiązują zawsze, nie trafiają do żadnego "pokaz";
-- sekcja lub pole zależne od dwóch odpowiedzi (np. załącznik przy TAK w poz. 34 i budynku jednorodzinnym) jest w "pokaz" obu decyzji: muszą być spełnione obie.
-Pojedyncza kratka oświadczenia, od której coś zależy (np. "☐ Oświadczam, że nieruchomość wyposażona jest w kompostownik"), to pole RADIO "Czy ...?" z opcjami "Tak" i "Nie".
-Pole "warunek" przy polu, sekcji lub stronie zostaw na proste przypadki tuż obok listy: liść {"pole": "techName pola wyboru", "wartosc": "dokładna nazwa jednej z jego opcji"}, łączenie {"i": [...]}, {"lub": [...]}, zaprzeczenie {"nie": warunek}. Przykład: opcja "Inne" z linią do wpisania -> pole TEXT_FIELD z warunkiem {"pole": "rodzaj", "wartosc": "Inne"}.
-
-Przykład. Papier:
-L030 C. Czy korzystasz ze zwolnienia z części opłaty? ☐ TAK ☐ NIE
-L031 D. OBLICZENIE ZWOLNIENIA (wypełnić tylko w przypadku zaznaczenia TAK w poz. C)
-L032 Liczba osób [#4] Kwota zwolnienia …… zł
-L033 E. Sposób zwrotu: ☐ przelew na rachunek ☐ w kasie urzędu
-L034 Numer rachunku [#26]
-Wynik:
-"decyzje": [
-  {"pole": "czy_zwolnienie", "pytanie": "Czy korzystasz ze zwolnienia z części opłaty?", "linie": ["L030"],
-   "opcje": [{"opcja": "Tak", "pokaz": ["obliczenie_zwolnienia"]}, {"opcja": "Nie", "pokaz": []}]},
-  {"pole": "sposob_zwrotu", "pytanie": "Wybierz sposób zwrotu", "linie": ["L033"],
-   "opcje": [{"opcja": "Przelew na rachunek", "pokaz": ["numer_rachunku"]}, {"opcja": "W kasie urzędu", "pokaz": []}]}
-]
-a w "strony": pole RADIO "czy_zwolnienie" (opcje "Tak", "Nie"), sekcja "obliczenie_zwolnienia" z polami "liczba_osob" i "kwota_zwolnienia", pole RADIO "sposob_zwrotu" i pole "numer_rachunku"; pola i sekcje z "pokaz" nie potrzebują już własnego "warunek".

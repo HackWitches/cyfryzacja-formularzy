@@ -2,7 +2,7 @@
 import json
 
 from app.domain.builder import build, validate
-from app.domain.contract import json_schema, normalize
+from app.domain.contract import normalize
 from app.llm.base import parse_json
 from app.rules import Context, apply
 
@@ -125,24 +125,3 @@ def test_truncated_answer_keeps_complete_fields():
     cut = full[:full.index("Drugie") + 3]
     data = parse_json(cut, repair=True)
     assert [f["techName"] for f in data["strony"][0]["sekcje"][0]["pola"]] == ["a"] and data["_ucieta_odpowiedz"]
-
-
-def test_decisions_become_conditions_and_missing_question_is_added():
-    raw = {"decyzje": [{"pole": "rodzaj", "pytanie": "Jakiego wniosku dotyczy?", "linie": ["L1"], "opcje": [
-        {"opcja": "Stypendium", "pokaz": ["osiagniecia", "dyscyplina"]}, {"opcja": "Nagroda", "pokaz": ["osiagniecia"]}]},
-        {"pole": "czy_klub", "pytanie": "Czy należysz do klubu?", "linie": [], "opcje": [
-            {"opcja": "Tak", "pokaz": ["dyscyplina"]}, {"opcja": "Nie", "pokaz": []}]}],
-           "strony": [{"tytul": "Wniosek", "sekcje": [{"tytul": "Osiągnięcia", "techName": "osiagniecia", "pola": [
-               {"techName": "czy_klub", "tytul": "Czy należysz do klubu?", "typ": "RADIO", "opcje": ["Tak", "Nie"]},
-               {"techName": "dyscyplina", "tytul": "Dyscyplina"}]}]}]}
-    c = normalize(raw)
-    assert normalize(c)["strony"] == c["strony"]  # idempotent
-    first, sec = c["strony"][0]["sekcje"]
-    assert first["pola"][0]["techName"] == "rodzaj" and first["pola"][0]["opcje"] == ["Stypendium", "Nagroda"]
-    assert sec["warunek"] == {"lub": [{"pole": "rodzaj", "wartosc": "Stypendium"}, {"pole": "rodzaj", "wartosc": "Nagroda"}]}
-    assert sec["pola"][0]["warunek"] is None  # the question itself never depends on itself
-    assert sec["pola"][1]["warunek"] == {"i": [{"pole": "rodzaj", "wartosc": "Stypendium"}, {"pole": "czy_klub", "wartosc": "Tak"}]}
-    form, _, errors = build(c)
-    assert errors == []
-    assert "decyzje" in json_schema()["required"]
-

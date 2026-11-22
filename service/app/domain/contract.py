@@ -34,16 +34,11 @@ def json_schema() -> dict:
     section = {"type": "object", "additionalProperties": False,
                "required": ["tytul", "techName", "powtarzalna", "warunek", "pola"],
                "properties": {"tytul": s, "techName": s, "powtarzalna": b, "warunek": opt_cond, "pola": arr(field)}}
-    decision = {"type": "object", "additionalProperties": False, "required": ["pole", "pytanie", "linie", "opcje"],
-                "properties": {"pole": s, "pytanie": s, "linie": arr(s), "opcje": arr(
-                    {"type": "object", "additionalProperties": False, "required": ["opcja", "pokaz"],
-                     "properties": {"opcja": s, "pokaz": arr(s)}})}}
     page = {"type": "object", "additionalProperties": False, "required": ["tytul", "warunek", "sekcje"],
             "properties": {"tytul": s, "warunek": opt_cond, "sekcje": arr(section)}}
     return {
         "type": "object", "additionalProperties": False,
-        "required": ["tytul", "adresat", "warianty", "dane_wnioskodawcy", "decyzje", "strony", "nowe_slowniki",
-                     "pominiete"],
+        "required": ["tytul", "adresat", "warianty", "dane_wnioskodawcy", "strony", "nowe_slowniki", "pominiete"],
         "$defs": {"warunek": {"anyOf": [leaf, node("i", arr(cond)), node("lub", arr(cond)), node("nie", cond)]}},
         "properties": {
             "tytul": s,
@@ -52,7 +47,6 @@ def json_schema() -> dict:
             "warianty": {"type": "object", "additionalProperties": False, "required": ["podmiot", "pelnomocnik"],
                          "properties": {"podmiot": b, "pelnomocnik": b}},
             "dane_wnioskodawcy": arr({"enum": sorted(APPLICANT_DATA)}),
-            "decyzje": arr(decision),  # before "strony": the model plans what depends on what, then lists fields
             "strony": arr(page),
             "nowe_slowniki": arr({"type": "object", "required": ["nazwa", "wartosci"],
                                   "properties": {"nazwa": s, "zastosowanie": s, "wartosci": arr(s)}}),
@@ -145,10 +139,9 @@ def is_base_field(f: dict) -> bool:
 
 
 def normalize(raw):
-    """Any LLM output (also the old 'sekcje' format) -> a contract with every key present, decisions turned into
-    visibility conditions, without fields that duplicate the base (listed in `_pola_bazy`)."""
+    """Any LLM output (also the old 'sekcje' format) -> a contract with every key present, without fields that
+    duplicate the base (listed in `_pola_bazy`)."""
     c = _normalize(raw)
-    apply_decisions(c)
     for page in c["strony"]:
         for sec in page["sekcje"]:
             where = " ".join(snake(sec["tytul"] + " " + sec["techName"], 300).split("_"))
@@ -182,52 +175,10 @@ def _normalize(raw):
                 "pola": [_field(f) for f in s.get("pola") or [] if isinstance(f, dict)],
             } for s in p.get("sekcje") or [] if isinstance(s, dict)],
         } for p in pages if isinstance(p, dict)],
-        "decyzje": [_decision(d) for d in raw.get("decyzje") or [] if isinstance(d, dict) and d.get("pole")],
         "nowe_slowniki": [d for d in raw.get("nowe_slowniki") or [] if isinstance(d, dict) and d.get("nazwa")],
         "_pola_bazy": list(raw.get("_pola_bazy") or []),  # keeps normalize() idempotent
         "pominiete": raw.get("pominiete") or [],
     }
-
-
-def _decision(d):
-    opts = [{"opcja": str(o.get("opcja") or "").strip(), "pokaz": [snake(t) for t in o.get("pokaz") or []]}
-            for o in d.get("opcje") or [] if isinstance(o, dict) and str(o.get("opcja") or "").strip()]
-    return {"pole": snake(d["pole"]), "pytanie": str(d.get("pytanie") or "").strip(),
-            "linie": list(d.get("linie") or []), "opcje": opts}
-
-
-def apply_decisions(c):
-    """`decyzje` -> conditions: every section, page or field listed under an option is shown only when that option
-    is chosen (several options of one question = "lub", several questions = "i"). A question the model planned but
-    did not list as a field is added as a RADIO at the start of the first page. Targets whose condition already
-    uses that question are left alone, so applying twice changes nothing."""
-    things = {snake(p["tytul"]): p for p in c["strony"]}
-    for p in c["strony"]:
-        for s in p["sekcje"]:
-            things[s["techName"]] = s
-            things.update({f["techName"]: f for f in s["pola"]})
-    wanted = {}  # target name -> {question: [options]}
-    for d in c["decyzje"]:
-        question = things.get(d["pole"])
-        if question is None and c["strony"]:
-            question = _plain(d["pole"], d["pytanie"] or d["pole"], "RADIO", True, lines=d["linie"])
-            question["opcje"] = [o["opcja"] for o in d["opcje"]]
-            c["strony"][0]["sekcje"].insert(0, {"tytul": d["pytanie"] or "Rodzaj wniosku", "techName": f"{d['pole']}_wybor",
-                                                "powtarzalna": False, "warunek": None, "pola": [question]})
-            things[d["pole"]] = question
-        own = {s["techName"] for p in c["strony"] for s in p["sekcje"] if question in s["pola"]}
-        for o in d["opcje"]:
-            for t in o["pokaz"]:
-                if t != d["pole"] and t not in own and t in things:
-                    wanted.setdefault(t, {}).setdefault(d["pole"], []).append(o["opcja"])
-    for t, by_question in wanted.items():
-        target = things[t]
-        used = {leaf["pole"] for leaf in leaves(target["warunek"])}
-        for q, opts in by_question.items():
-            if q in used:
-                continue
-            new = [{"pole": q, "wartosc": o} for o in dict.fromkeys(opts)]
-            target["warunek"] = both(target["warunek"], new[0] if len(new) == 1 else {"lub": new})
 
 
 def _plain(tech, title, typ="TEXT_FIELD", required=False, validators=(), dictionary=None, cond=None, lines=()):
